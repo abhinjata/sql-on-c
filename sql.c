@@ -1,287 +1,454 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-typedef struct Node{
+//forward declaration so ForeignKey can refer to Table
+typedef struct Table Table;
 
-    int data;
-    struct Node* link;
-    
-} Node;
+#define MAX_TABLES 100
 
-// 1) Insert (begin & end) -> 2) Deletion (Begin & End) -> 3) Display/Traverse -> 4) Search
+Table* table_registry[MAX_TABLES];
 
-// Insert at Beginning 
+int table_count = 0;
 
-void insertAtBeginning(Node** head, int value){
+typedef struct{
 
-    Node* newNode = malloc(sizeof(Node));
-    newNode -> data = value;
+    char* name;
+    int type;  //0 = string, 1 = int
 
-    //single node circle
-    if(*head == NULL){
+}Column;
 
-        newNode -> link = newNode; 
-        *head = newNode;
-        return;
-    }
+typedef struct{
 
-    Node* temp = *head;
+    int source_column;
+    Table* target_table;
+    int target_column;
 
-    // move to the last node
+}ForeignKey;
 
-    while(temp -> link != *head){
+typedef struct{
 
-        temp = temp -> link;
+    void** values; //allows to store different data types, really cool!
 
-    }
+}Tuple;
 
-    newNode -> link = *head;
-    temp -> link = newNode;
-    *head = newNode;
+struct Table{
+
+    char* name;
+    Column* columns;
+    int column_count;
+
+    Tuple** rows;
+    int row_count;
+
+    ForeignKey* foreign_keys;
+    int foreign_key_count;
+
+};
+
+
+Table* create_table(char* name, int column_count){
+
+    Table* table = malloc(sizeof(Table));
+    table -> name = strdup(name); //good practice to just duplicate the string here instead
+    table -> columns = NULL; 
+    table -> column_count = column_count;
+    table -> rows = NULL;
+    table -> row_count = 0;
+    table -> foreign_keys = NULL;
+    table -> foreign_key_count = 0;
+    return table;
 }
 
-void insertAtBeginning(Node** head, int value){
+Table* create_table_from_user_input(){
 
-    Node* newNode = malloc(sizeof(Node));
-    newNode -> data = value;
+    char table_name[100];
+    int column_count;
 
-    if(*head == NULL){
+    printf("Enter table name: ");
 
-        newNode -> link = newNode;
-        *head = newNode;
-        return;
+    fgets(table_name, sizeof(table_name), stdin);
+    table_name[strcspn(table_name, "\n")] = 0;
 
+    printf("Enter number of columns: ");
+
+    scanf("%d", &column_count);
+    getchar(); //clear newline
+
+    Table* table = create_table(table_name, column_count);
+    table->columns = malloc(sizeof(Column) * column_count);
+
+    for (int i = 0; i < column_count; i++) {
+        char col_name[100];
+        int type;
+
+        printf("Column %d name: ", i + 1);
+        fgets(col_name, sizeof(col_name), stdin);
+        col_name[strcspn(col_name, "\n")] = 0;
+
+        printf("Column %d type (0 = STRING, 1 = INT): ", i + 1);
+        scanf("%d", &type);
+        getchar(); // clear newline
+
+        table->columns[i].name = strdup(col_name);
+        table->columns[i].type = type;
     }
 
-    Node* temp = *head;
-
-    while(temp -> link != *head){
-
-        temp = temp -> link;
-    }
-
-    newNode -> link = *head;
-    temp -> link = newNode;
-    *head = newNode;
+    // Register in global list
+    table_registry[table_count++] = table;
+    return table;
 }
 
-void insertAtEnd(Node** head, int value){
+Tuple* create_tuple(Table* table){
 
-    Node* newNode = malloc(sizeof(Node));
-    newNode -> data = value;
-
-    if(*head == NULL){
-
-        newNode -> link = *head;
-        *head = newNode;
-        return;
-    }
-
-    Node* temp = *head;
-
-    while(temp -> link != *head){
-
-        temp = temp -> link;
-    }
-
-    temp -> link = newNode;
-    newNode -> link = *head;
+    Tuple* tuple = malloc(sizeof(Tuple));
+    tuple -> values = malloc(sizeof(void*) * table->column_count);
+    return tuple;
 }
 
-void insertAtEnd(Node** head, int value){
+void insert_tuple(Table* table, Tuple* tuple){
 
-    Node* newNode = malloc(sizeof(Node));
-    newNode -> data = value;
+    //foreign key constraints
+    for(int i = 0; i < table -> foreign_key_count; i++){
 
-    if(*head == NULL){
+        ForeignKey* fk = &table -> foreign_keys[i];
+        void* foreign_value = tuple -> values[fk -> source_column];
 
-        newNode -> link = *head;
-        *head = newNode;
-        return;
+        int found = 0;
+        for (int j = 0; j < fk -> target_table -> row_count; j++){
 
+            void* target_value = fk -> target_table -> rows[j] -> values[fk -> target_column];
+
+            if (strcmp(target_value, foreign_value) == 0){
+
+                found = 1;
+                break;
+            }
+
+        }
+
+        if (found == 0){
+
+            printf("[ERROR CODE 001] Foreign key constraint failed on column %d: tuple does not exist in target table '%s'\n", fk -> source_column, fk -> target_table->name);
+            return; //don't insert
+
+        }
     }
 
-    Node* temp = *head;
-
-    while(temp -> link != *head){
-
-        temp = temp -> link;
-
-    }
-
-    temp -> link = newNode;
-    newNode -> link = *head;
+    // If valid, insert the tuple
+    table->rows = realloc(table -> rows, sizeof(Tuple*) * (table -> row_count + 1));
+    table->rows[table->row_count++] = tuple;
 
 }
 
-void deleteBeginning(Node** head){
 
-    if(*head == NULL) return;
+void add_foreign_key(Table* table, int column_index, Table* target, int target_column){
 
-    Node* temp = head; 
+    table -> foreign_keys = realloc(table -> foreign_keys, sizeof(ForeignKey) * (table -> foreign_key_count + 1));
 
-    if(temp -> link == *head){
+    ForeignKey fk;
+    fk.source_column = column_index;
+    fk.target_table = target;
+    fk.target_column = target_column;
 
-        free(temp);
-        *head = NULL;
-        return;
+    table -> foreign_keys[table -> foreign_key_count] = fk;
+    table -> foreign_key_count++;
+
+}
+
+Tuple* find_department(Table* departments, const char* name){
+
+    for (int i = 0; i < departments->row_count; i++){
+
+        Tuple* tuple = departments->rows[i];
+
+        if (strcmp(tuple -> values[0], name) == 0){
+
+            return tuple;
+        }
+    }
+
+    return NULL;
+}
+
+
+void print_employees(Table* employees) {
+
+    printf("Employees Table:\n");
+
+    for (int i = 0; i < employees -> row_count; i++) {
+
+        Tuple* emp = employees -> rows[i];
+        char* name = emp -> values[0];
+        Tuple* dept = emp -> values[1];
+        char* dept_name = dept -> values[0];
+
+        printf("Employee: %s, Department: %s\n", name, dept_name);
+
+    }
+}
+
+void create_department(Table* departments, const char* dept_name){
+
+    Tuple* new_dept = create_tuple(departments);
+    new_dept->values[0] = strdup(dept_name);
+    insert_tuple(departments, new_dept);
+
+}
+
+void read_input(char* buffer, int size){
+
+    fgets(buffer, size, stdin);
+    buffer[strcspn(buffer, "\n")] = 0;  //remove newline
+
+}
+
+void show_tables(){
+
+    printf("\n--- Tables ---\n");
+
+    for (int t = 0; t < table_count; t++){
+
+        Table* table = table_registry[t];
+        printf("Table: %s\n", table->name);
+        printf("Columns:\n");
+
+        for (int c = 0; c < table->column_count; c++){
+
+            char* type_str = (table->columns[c].type == 0) ? "STRING" : "INT";
+            printf("  - %s (%s)", table->columns[c].name, type_str);
+
+            // Check foreign keys
+            for (int fk_i = 0; fk_i < table->foreign_key_count; fk_i++){
+
+                ForeignKey* fk = &table->foreign_keys[fk_i];
+
+                if (fk->source_column == c) {
+                    printf("  [FK → %s.%s]",
+                        fk->target_table->name,
+                        fk->target_table->columns[fk->target_column].name
+                    );
+                }
+            }
+
+            printf("\n");
+        }
+
+        printf("\n");
+    }
+}
+
+int main(){
+
+    int choice;
+
+    // Pre-create Departments and Employees table dynamically
+    Table* departments = create_table("Departments", 1);
+    departments->columns = malloc(sizeof(Column));
+    departments->columns[0].name = strdup("name");
+    departments->columns[0].type = 0;
+    table_registry[table_count++] = departments;
+
+    Table* employees = create_table("Employees", 2);
+    employees->columns = malloc(sizeof(Column) * 2);
+    employees->columns[0].name = strdup("name");
+    employees->columns[0].type = 0;
+    employees->columns[1].name = strdup("department");
+    employees->columns[1].type = 0;
+    table_registry[table_count++] = employees;
+
+    while(1==1){
+        printf("\n==== MENU ====\n");
+        printf("1. Add Department\n");
+        printf("2. Add Employee\n");
+        printf("3. Show Tables\n");
+        printf("4. Add Foreign Key\n");
+        printf("5. Exit\n");
+        printf("Choice: ");
+        scanf("%d", &choice);
+        getchar(); // consume newline
+
+        if (choice == 1){
+
+            char dept_name[100];
+            printf("Enter department name: ");
+            fgets(dept_name, sizeof(dept_name), stdin);
+            dept_name[strcspn(dept_name, "\n")] = 0;
+
+            create_department(departments, dept_name);
+
+        } 
         
+        else if (choice == 2) {
+            char emp_name[100], dept_name[100];
+
+            printf("Enter employee name: ");
+            fgets(emp_name, sizeof(emp_name), stdin);
+            emp_name[strcspn(emp_name, "\n")] = 0;
+
+            printf("Enter department name: ");
+            fgets(dept_name, sizeof(dept_name), stdin);
+            dept_name[strcspn(dept_name, "\n")] = 0;
+
+            Tuple* dept_ptr = find_department(departments, dept_name);
+            if (!dept_ptr) {
+                printf("Department not found. Creating new department.\n");
+                create_department(departments, dept_name);
+                dept_ptr = find_department(departments, dept_name);
+            }
+
+            Tuple* new_emp = create_tuple(employees);
+            new_emp->values[0] = strdup(emp_name);
+            new_emp->values[1] = dept_ptr;
+
+            insert_tuple(employees, new_emp);
+
+        } 
+        
+        else if (choice == 3) {
+
+            show_tables();
+
+        } 
+        
+        else if (choice == 4) {
+            // Add a foreign key from Employees[1] → Departments[0]
+            add_foreign_key(employees, 1, departments, 0);
+            printf("Foreign key added: Employees.department → Departments.name\n");
+
+        } 
+        
+        else if (choice == 5){
+
+            printf("Goodbye!\n");
+            break;
+
+        } 
+        
+        else{
+
+            printf("Invalid choice.\n");
+        }
     }
 
-    Node* last = *head;
+    return 0;
 
-    while(last -> link != *head){
+    /*Table* departments = create_table("Departments", 1);
+    Table* employees = create_table("Employees", 2);
 
-        last = last -> link;
+    // Link: employees.dept_ptr → departments.name
+    add_foreign_key(employees, 1, departments, 0);
 
-    }
+    char emp_name[100], dept_name[100], choice[10];
 
-    last -> link = temp -> link;
-    *head = temp -> link;
+    while(1 == 1){
 
-    free(temp);
-}
+        printf("\n--- Menu ---\n");
+        printf("1. Add Employee\n");
+        printf("2. View Employees\n");
+        printf("3. View Departments\n");
+        printf("4. Exit\n");
 
-void deleteBeginning(Node** head){
+        printf("Enter choice: ");
+        fgets(choice, sizeof(choice), stdin);
+        choice[strcspn(choice, "\n")] = 0;
 
-    Node* temp = *head; 
+        if(strcmp(choice, "1") == 0){
 
-    if(temp -> link == *head){
+            printf("Enter employee name: ");
+            fgets(emp_name, sizeof(emp_name), stdin);
+            emp_name[strcspn(emp_name, "\n")] = 0;
 
-        free(temp);
-        *head = NULL;
-        return;
+            printf("Enter department name: ");
+            fgets(dept_name, sizeof(dept_name), stdin);
+            dept_name[strcspn(dept_name, "\n")] = 0;
 
-    }
+            //check if department exists
+            Tuple* dept_ptr = find_department(departments, dept_name);
 
-    Node* last = *head;
+            if (!dept_ptr){
 
-    while(last -> link != *head){
+                printf("Department not found. Creating new department: %s\n", dept_name);
+                create_department(departments, dept_name);
+                dept_ptr = find_department(departments, dept_name); //NOWW it exists
 
-        last = last -> link;
-    }
+            }
 
-    last -> link = temp -> link;
-    *head = temp -> link;
+            //Create and insert employee
 
-    free(temp);
+            Tuple* new_emp = create_tuple(employees);
+            new_emp->values[0] = strdup(emp_name);
+            new_emp->values[1] = dept_ptr;
+            insert_tuple(employees, new_emp);
 
-}
+            printf("Employee added.\n");
 
-void deleteBeginning(Node** head){
+        } 
+        
+        else if (strcmp(choice, "2") == 0){
+            print_employees(employees);
 
-    Node* temp = *head;
+        } 
+        
+        else if (strcmp(choice, "3") == 0){
 
-    if(temp -> link == *head){
+            printf("Departments:\n");
 
-        free(temp);
-        *head = NULL;
-        return;
+            for (int i = 0; i < departments->row_count; i++){
 
-    }
+                char* dept = departments->rows[i]->values[0];
+                printf("- %s\n", dept);
+            }
 
-    Node* last = *head;
+        } 
+        
+        else if (strcmp(choice, "4") == 0){
 
-    while(last -> link != *head){
+            printf("Exiting.\n");
+            break;
 
-        last = last -> link;
-
-    }
-
-    last -> link = temp -> link;
-    *head = temp -> link;
-
-    free(temp);
-
-}
-
-void deleteEnd(Node** head){
-
-    if(*head == NULL) return;
-
-    Node* temp = *head;
-
-    if(temp -> link == *head){
-
-        free(temp);
-        *head = NULL;
-        return;
-    }
-
-    Node* prev = NULL;
-
-    while(temp -> link != *head){
-
-        prev = temp;
-        temp = temp -> link;
-    }
-
-    prev -> link = *head;
-    free(temp);
-
-}
-
-void deleteEnd(Node** head){
-
-    if(*head == NULL) return;
-
-    Node* temp = *head;
-
-    if(temp -> link == *head){
-
-        free(temp);
-        *head = NULL;
-        return;
-
-    }
-
-    Node* prev = NULL;
-
-    while(temp -> link != *head){
-
-        prev = temp;
-        temp = temp -> link;
-
-    }
-
-    prev -> link = *head;
-    free(temp);
-    
-}
-
-void displayList(Node* head){
-
-    Node* temp = head;
-
-    while(temp != head){
-
-        printf("%d -> ", temp -> data);
-        temp = temp -> link;
-
-    }
-
-    printf("(head)\n");
-    
-}
-
-void searchElement(Node* head, int key){
-
-    Node* temp = head;
-
-    int position = 0;
-
-    while(temp != head){
-
-        if(temp -> data == key){
-
-            printf("Element %d found at position %d \n", key, position);
-            return;
         }
         
-        temp = temp -> link;
-        position++;
+        else{
+
+            printf("Invalid choice. Try again.\n");
+        }
     }
 
-    printf("Element not found.");
-    
-}
+    return 0;*/
 
+    /*// Create Departments Table
+    Table* departments = create_table("Departments", 1);
+
+    Tuple* d1 = create_tuple(departments);
+    d1->values[0] = strdup("Engineering");
+    insert_tuple(departments, d1);
+
+    Tuple* d2 = create_tuple(departments);
+    d2->values[0] = strdup("HR");
+    insert_tuple(departments, d2);
+
+    // Create Employees Table (name, dept_ptr)
+    Table* employees = create_table("Employees", 2);
+    
+    Tuple* e1 = create_tuple(employees);
+    e1->values[0] = strdup("Alice");
+    e1->values[1] = d1;  // points to Engineering
+    insert_tuple(employees, e1);
+
+    Tuple* e2 = create_tuple(employees);
+    e2->values[0] = strdup("Bob");
+    e2->values[1] = d2;  // points to HR
+    insert_tuple(employees, e2);
+
+    Tuple* e3 = create_tuple(employees);
+    e3->values[0] = strdup("Charlie");
+    e3->values[1] = (Tuple*)0xDEADBEEF; // Invalid pointer
+    insert_tuple(employees, e3);
+
+    print_employees(employees);
+
+    // Cleanup omitted for brevity
+
+    return 0;*/
+}
