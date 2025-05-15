@@ -5,7 +5,19 @@
 //forward declaration so ForeignKey can refer to Table
 typedef struct Table Table;
 
+//operation types for undo functionality
+typedef enum {
+
+    OP_ADD_DEPARTMENT,
+    OP_ADD_EMPLOYEE,
+    OP_ADD_FOREIGN_KEY,
+    OP_CREATE_TABLE
+
+} OperationType;
+
+
 #define MAX_TABLES 100
+#define MAX_UNDO_STACK 50
 
 Table* table_registry[MAX_TABLES];
 
@@ -32,6 +44,31 @@ typedef struct{
 
 }Tuple;
 
+//ai helped structure to store operation details for undo functionality
+
+typedef struct {
+    OperationType type;
+    union {
+        struct {
+            Table* table;
+            int row_index;
+        } row_operation;
+        
+        struct {
+            Table* source_table;
+            int fk_index;
+        } fk_operation;
+        
+        struct {
+            int table_index;
+        } table_operation;
+    } data;
+} Operation;
+
+//stack for undo operations
+Operation undo_stack[MAX_UNDO_STACK];
+int undo_stack_top = -1;
+
 struct Table{
 
     char* name;
@@ -45,6 +82,153 @@ struct Table{
     int foreign_key_count;
 
 };
+
+//the functions for the undo operation feature
+
+void free_tuple_data(Tuple* tuple, int column_count) {
+
+    if (tuple) {
+
+        for (int i = 0; i < column_count; i++) {
+
+            // Only free string values (type 0)
+            // This is a simplification - in a real system you'd need to know which values are allocated
+
+            if (tuple->values[i] && i != 1) { //skip the dept_ptr in Employees table (index 1)
+
+                free(tuple->values[i]);
+            }
+        }
+        free(tuple->values);
+        free(tuple);
+    }
+}
+
+void remove_last_row(Table* table) {
+
+    if (table->row_count > 0) {
+
+        int last_idx = table->row_count - 1;
+
+        //handle special case for Employees table (avoiding double free of dept_ptr)
+        if (strcmp(table->name, "Employees") == 0) {
+
+            free(table->rows[last_idx]->values[0]); // Free only the name
+            free(table->rows[last_idx]->values);    // Free the values array
+            free(table->rows[last_idx]);            // Free the tuple
+        } 
+        
+        else {
+
+            free_tuple_data(table->rows[last_idx], table->column_count);
+        }
+        table->row_count--;
+    }
+}
+
+void remove_last_foreign_key(Table* table) {
+
+    if (table->foreign_key_count > 0) {
+        table->foreign_key_count--;
+
+        //no need to free anything as we're just decreasing the count
+    }
+}
+
+void remove_last_table() {
+
+    if (table_count > 0) {
+
+        Table* table = table_registry[table_count - 1];
+        
+        //free all tuples/rows
+        for (int i = 0; i < table->row_count; i++) {
+
+            free_tuple_data(table->rows[i], table->column_count);
+        }
+
+        if (table->rows) free(table->rows);
+        
+        //free all columns
+        for (int i = 0; i < table->column_count; i++) {
+
+            if (table->columns[i].name) free(table->columns[i].name);
+        }
+
+        if (table->columns) free(table->columns);
+        
+        //free foreign keys (only the array, not the tables they point to)
+        if (table->foreign_keys) free(table->foreign_keys);
+        
+        //free table name and the table itself
+        if (table->name) free(table->name);
+        free(table);
+        
+        table_count--;
+    }
+}
+
+
+void push_operation(Operation op) {
+
+    if (undo_stack_top < MAX_UNDO_STACK - 1) {
+
+        undo_stack[++undo_stack_top] = op;
+        printf("[System] Operation recorded for undo (Stack size: %d)\n", undo_stack_top + 1);
+
+    }
+    
+    else {
+
+        printf("[System] Warning: Undo stack is full. Oldest operation removed.\n");
+
+        // Shift all operations down one position to make room
+        for (int i = 0; i < MAX_UNDO_STACK - 1; i++) {
+            undo_stack[i] = undo_stack[i + 1];
+        }
+        undo_stack[MAX_UNDO_STACK - 1] = op;
+    }
+}
+
+int undo_last_operation() {
+
+    if (undo_stack_top < 0) {
+        printf("[System] Nothing to undo.\n");
+        return 0;
+    }
+    
+    Operation op = undo_stack[undo_stack_top--];
+    
+    switch (op.type) {
+
+        case OP_ADD_DEPARTMENT:
+            printf("[System] Undoing: Add Department\n");
+            remove_last_row(op.data.row_operation.table);
+            break;
+            
+        case OP_ADD_EMPLOYEE:
+            printf("[System] Undoing: Add Employee\n");
+            remove_last_row(op.data.row_operation.table);
+            break;
+            
+        case OP_ADD_FOREIGN_KEY:
+            printf("[System] Undoing: Add Foreign Key\n");
+            remove_last_foreign_key(op.data.fk_operation.source_table);
+            break;
+            
+        case OP_CREATE_TABLE:
+            printf("[System] Undoing: Create Table\n");
+            remove_last_table();
+            break;
+            
+        default:
+            printf("[System] Unknown operation type.\n");
+            return 0;
+    }
+    
+    return 1;
+}
+
 
 
 Table* create_table(char* name, int column_count){
@@ -96,6 +280,12 @@ Table* create_table_from_user_input(){
 
     // Register in global list
     table_registry[table_count++] = table;
+
+    Operation op;
+    op.type = OP_CREATE_TABLE;
+    op.data.table_operation.table_index = table_count - 1;
+    push_operation(op);
+
     return table;
 }
 
@@ -154,6 +344,105 @@ void add_foreign_key(Table* table, int column_index, Table* target, int target_c
     table -> foreign_keys[table -> foreign_key_count] = fk;
     table -> foreign_key_count++;
 
+    Operation op;
+    op.type = OP_ADD_FOREIGN_KEY;
+    op.data.fk_operation.source_table = table;
+    op.data.fk_operation.fk_index = table->foreign_key_count - 1;
+    push_operation(op);
+
+
+}
+
+void interactive_add_foreign_key() {
+
+    if (table_count < 2) {
+        printf("Need at least 2 tables to create a foreign key. Please create more tables first.\n");
+        return;
+    }
+
+    // List all tables for selection
+    printf("\nAvailable Tables:\n");
+    for (int i = 0; i < table_count; i++) {
+        printf("%d. %s\n", i + 1, table_registry[i]->name);
+    }
+
+    // Select source table
+    int source_table_idx;
+    printf("\nSelect source table (1-%d): ", table_count);
+    scanf("%d", &source_table_idx);
+    getchar(); // consume newline
+    
+    if (source_table_idx < 1 || source_table_idx > table_count) {
+        printf("Invalid table selection.\n");
+        return;
+    }
+    
+    Table* source_table = table_registry[source_table_idx - 1];
+    
+    // List columns of source table
+    printf("\nColumns in %s:\n", source_table->name);
+    for (int i = 0; i < source_table->column_count; i++) {
+        printf("%d. %s\n", i + 1, source_table->columns[i].name);
+    }
+    
+    // Select source column
+    int source_col_idx;
+    printf("\nSelect source column (1-%d): ", source_table->column_count);
+    scanf("%d", &source_col_idx);
+    getchar(); // consume newline
+    
+    if (source_col_idx < 1 || source_col_idx > source_table->column_count) {
+        printf("Invalid column selection.\n");
+        return;
+    }
+    
+    // Select target table
+    int target_table_idx;
+    printf("\nSelect target table (1-%d): ", table_count);
+    scanf("%d", &target_table_idx);
+    getchar(); // consume newline
+    
+    if (target_table_idx < 1 || target_table_idx > table_count) {
+        printf("Invalid table selection.\n");
+        return;
+    }
+    
+    Table* target_table = table_registry[target_table_idx - 1];
+    
+    // List columns of target table
+    printf("\nColumns in %s:\n", target_table->name);
+    for (int i = 0; i < target_table->column_count; i++) {
+        printf("%d. %s\n", i + 1, target_table->columns[i].name);
+    }
+    
+    // Select target column
+    int target_col_idx;
+    printf("\nSelect target column (1-%d): ", target_table->column_count);
+    scanf("%d", &target_col_idx);
+    getchar(); // consume newline
+    
+    if (target_col_idx < 1 || target_col_idx > target_table->column_count) {
+        printf("Invalid column selection.\n");
+        return;
+    }
+    
+    // Make sure source and target columns have compatible types
+    int source_type = source_table->columns[source_col_idx - 1].type;
+    int target_type = target_table->columns[target_col_idx - 1].type;
+    
+    if (source_type != target_type) {
+        printf("Error: Column types must match. Source is %s, target is %s.\n", 
+               source_type == 0 ? "STRING" : "INT", 
+               target_type == 0 ? "STRING" : "INT");
+        return;
+    }
+    
+    // Add the foreign key
+    add_foreign_key(source_table, source_col_idx - 1, target_table, target_col_idx - 1);
+    
+    printf("Foreign key added: %s.%s → %s.%s\n", 
+           source_table->name, source_table->columns[source_col_idx - 1].name,
+           target_table->name, target_table->columns[target_col_idx - 1].name);
 }
 
 Tuple* find_department(Table* departments, const char* name){
@@ -194,6 +483,12 @@ void create_department(Table* departments, const char* dept_name){
     new_dept->values[0] = strdup(dept_name);
     insert_tuple(departments, new_dept);
 
+    Operation op;
+    op.type = OP_ADD_DEPARTMENT;
+    op.data.row_operation.table = departments;
+    op.data.row_operation.row_index = departments->row_count - 1;
+    push_operation(op);
+
 }
 
 void read_input(char* buffer, int size){
@@ -218,7 +513,7 @@ void show_tables(){
             char* type_str = (table->columns[c].type == 0) ? "STRING" : "INT";
             printf("  - %s (%s)", table->columns[c].name, type_str);
 
-            // Check foreign keys
+            //check foreign keys
             for (int fk_i = 0; fk_i < table->foreign_key_count; fk_i++){
 
                 ForeignKey* fk = &table->foreign_keys[fk_i];
@@ -238,11 +533,22 @@ void show_tables(){
     }
 }
 
+void interactive_table_creation() {
+
+    Table* new_table = create_table_from_user_input();
+    printf("Custom table '%s' created with %d columns.\n", new_table->name, new_table->column_count);
+
+}
+
+
 int main(){
 
     int choice;
 
-    // Pre-create Departments and Employees table dynamically
+    //pre-create Departments and Employees table dynamically
+
+    // THESE ARE DEFAULT AND HARDCODED BECAUSE THIS IS AN EMPLOYEE RBMS
+
     Table* departments = create_table("Departments", 1);
     departments->columns = malloc(sizeof(Column));
     departments->columns[0].name = strdup("name");
@@ -258,12 +564,15 @@ int main(){
     table_registry[table_count++] = employees;
 
     while(1==1){
+
         printf("\n==== MENU ====\n");
         printf("1. Add Department\n");
         printf("2. Add Employee\n");
         printf("3. Show Tables\n");
         printf("4. Add Foreign Key\n");
         printf("5. Exit\n");
+        printf("6. Create Custom Table\n");
+        printf("7. Undo Last Operation\n");
         printf("Choice: ");
         scanf("%d", &choice);
         getchar(); // consume newline
@@ -312,10 +621,8 @@ int main(){
         } 
         
         else if (choice == 4) {
-            // Add a foreign key from Employees[1] → Departments[0]
-            add_foreign_key(employees, 1, departments, 0);
-            printf("Foreign key added: Employees.department → Departments.name\n");
 
+            interactive_add_foreign_key();
         } 
         
         else if (choice == 5){
@@ -324,6 +631,16 @@ int main(){
             break;
 
         } 
+
+        else if (choice == 6) {
+
+            interactive_table_creation();
+        }
+
+        else if (choice == 7) {
+
+            undo_last_operation();
+        }
         
         else{
 
@@ -333,7 +650,10 @@ int main(){
 
     return 0;
 
-    /*Table* departments = create_table("Departments", 1);
+    /*
+        some previous code for my reference
+    
+    Table* departments = create_table("Departments", 1);
     Table* employees = create_table("Employees", 2);
 
     // Link: employees.dept_ptr → departments.name
