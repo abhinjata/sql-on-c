@@ -1,5 +1,5 @@
 # sql-on-c
-A very wanky RDBMS on C, completely vibe coded for a college DS course. 
+A very wanky RDBMS on C for a college DS course. 
 
 ## Building SQL (or a pretty similar RDBMS Application) on C
 
