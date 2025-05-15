@@ -1,7 +1,9 @@
 # sql-on-c
 A very wanky RDBMS on C for a college DS course. 
 
-## Building SQL (or a pretty similar RDBMS Application) on C
+## Report: Building SQL (or a pretty similar RDBMS Application) on C
+
+The source code is present as a .C file in the repo, download and run at will. It is self-explanatory, so I will be using this README.md file as Report as well.
 
 ## Abstract 
 
