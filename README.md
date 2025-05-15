@@ -3,7 +3,7 @@ A very wanky RDBMS on C for a college DS course.
 
 ## Report: Building SQL (or a pretty similar RDBMS Application) on C
 
-The source code is present as a .C file in the repo, download and run at will. It is self-explanatory, so I will be using this README.md file as Report as well.
+The source code is present as a .C file in the repo, download and run at will. It is self-explanatory, so I will be using this README.md file as Report as well. You can also find this project on https://github.com/abhinjata/sql-on-c/
 
 ## Abstract 
 
