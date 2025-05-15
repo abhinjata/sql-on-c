@@ -1,22 +1,6 @@
 # sql-on-c
 A very wanky RDBMS on C, completely vibe coded for a college DS course. 
 
-Title
-
-Abstract
-
-Problem Description
-
-Implementation Details
-
-Data Structures Used
-
-Challenges Faced
-
-Conclusion and Learnings
-
-Screenshots (if applicable)
-
 ## Building SQL (or a pretty similar RDBMS Application) on C
 
 ## Abstract 
